@@ -1,0 +1,29 @@
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# IDE metadata
+.project
+.cproject
+
+# Broken/old repository backups
+.git.broken/
+.git_backup/
+
+# Build artifacts
+*.exe
+*.stackdump
+*.mod
+*.o
+mendcn
+MENDcn_mpi
+
+# Eclipse / generated build directories
+Debug/
+
+# Model outputs
+userio/out*/
+
+# Large/generated parameter sweeps
+userio/inp/SOBOLpar.txt
+userio/inp/SOBOLpar_unfinished.txt

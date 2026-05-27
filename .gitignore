@@ -23,6 +23,7 @@ Debug/
 
 # Model outputs
 userio/out*/
+userio/inp/
 
 # Large/generated parameter sweeps
 userio/inp/SOBOLpar.txt

@@ -386,6 +386,7 @@ MODULE MOD_MEND_TYPE
         INTEGER iENZN_Allocate                         !Nitrogen Enzyme Allocation: 0-weighting factor = N pool, 1-weighting factor = N-Pool/Half-saturation-constant
         INTEGER iHR                                    !HR calculation method, fraction of [0: potential uptake, 1: actual uptake]
         INTEGER iTmp_Func                              !sINI%iTmp_Func: temperature response function [0: Arrhenius Equation, 1: Q10 Equation]
+        INTEGER iALT_type                              !0: seasonally frozen soil ALT functions; 1: permafrost ALT functions
         INTEGER nVARopt                                !# of observed response variables for optimization
         CHARACTER(len=20):: Name_VARopt(const_nVAR0)   !Names of Variables selected for comparison/optimization
         INTEGER nOBS_tot                               !total # of observations for those output variables, = sum(VARopt_int(:, 2) )
@@ -490,4 +491,3 @@ MODULE MOD_MEND_TYPE
       
 !-----------------------------------------------------------------------------! 
 END MODULE MOD_MEND_TYPE 
-

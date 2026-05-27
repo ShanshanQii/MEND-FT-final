@@ -1298,7 +1298,7 @@ CONTAINS
     
         sOUT % MNPOOL % Fdepth =  sINP % Fdep
         sOUT % MNPOOL % Tdepth =  sINP % Tdep !!qss:mark0303
-        sOUT % MNPOOL % ALT_scalar = fALT_DEC(sOUT%MNPOOL%Fdepth, sOUT%MNPOOL%Tdepth ,sINI%soilDepth,sPAR%ALTa) !for comparison
+        sOUT % MNPOOL % ALT_scalar = fALT_DEC(sOUT%MNPOOL%Fdepth, sOUT%MNPOOL%Tdepth ,sINI%soilDepth,sPAR%ALTa, sINI%iALT_type) !for comparison
 
 
         !Flux 2: POM decomposition
@@ -2166,7 +2166,7 @@ CONTAINS
         end if
         wp_scalar_opt   = fSWP_OPT(wp)
         pH_scalar       = fpH(sCase,pH)
-        ALT_scalar = fALT_DEC(fdep, tdep, const_soilDepth, sPAR%ALTa)
+        ALT_scalar = fALT_DEC(fdep, tdep, sINI%soilDepth, sPAR%ALTa, sINI%iALT_type)
         ! sPAR % VdPOM(1)     = sPARbase % VdPOM(1)*pH_scalar*tp_scalar*wp_scalar_opt !!(/xx(3)/) ![mg POM/mg ENZP/h], maximum reaction rate for conversion of POM by ENZP
         sPAR % VdPOM(1) = sPARbase % VdPOM(1)*pH_scalar*ALT_scalar*wp_scalar_opt
     
@@ -2178,7 +2178,7 @@ CONTAINS
         end if
         wp_scalar = fSWP(wp, BIOME, SOM)
         pH_scalar = fpH(sCase,pH)
-        ALT_scalar = fALT_DEC(fdep, tdep, const_soilDepth, sPAR%ALTa)
+        ALT_scalar = fALT_DEC(fdep, tdep, sINI%soilDepth, sPAR%ALTa, sINI%iALT_type)
         ! sPAR % VdPOM(2)     = sPARbase % VdPOM(2)*pH_scalar*tp_scalar*wp_scalar  !!xx(4) !!set Vd_cel = Vd_lig
         sPAR % VdPOM(2)     = sPARbase % VdPOM(2)*pH_scalar*ALT_scalar*wp_scalar 
     
@@ -2256,7 +2256,7 @@ CONTAINS
         !        tp_scalar = fTQ10_MEND(sCase,tp, const_Tref, sPAR % Q10)
         !    end if
         wp_scalar = fSWP(wp, BIOME, SOM)  !!same as Cellulose-decomposition
-        ALT_scalar = fALT_DEC(fdep, tdep, const_soilDepth, sPAR%ALTa)
+        ALT_scalar = fALT_DEC(fdep, tdep, sINI%soilDepth, sPAR%ALTa, sINI%iALT_type)
         ! sPAR % Vg        = sPARbase % Vg*tp_scalar !!*wp_scalar !![mg DOM/mg MB/h], maximum uptake rate of DOM by MB  xx(17)
         sPAR % Vg        = sPARbase % Vg*ALT_scalar
 
@@ -2293,7 +2293,7 @@ CONTAINS
         !! use the same fSWP as fSWP_A2D
         !    if(sINI%iSWP_die.eq.0) then
         wp_scalar_low = fSWP_A2D(wp, sPARbase % SWP_A2D, sPARbase%wdorm)  !!negative effect  !!wdie
-        ! ALT_scalar_low = fALT_A2D(fdep, tdep, const_soilDepth,sPAR%ALTa,sPAR%ALTb)
+        ! ALT_scalar_low = fALT_A2D(fdep, tdep, sINI%soilDepth,sPAR%ALTa,sPAR%ALTb)
         !    else
         !        wp_scalar_low =  fSWP_Death(wp,SWPmin,sPAR%wdie)
         !    end if
@@ -2312,8 +2312,8 @@ CONTAINS
         wp_scalar     = fSWP_D2A(wp, sPAR % SWP_D2A, sPAR % wdorm)  !!positive effect, increase with increasing SWC or SWP
         wp_scalar_low = fSWP_A2D(wp, sPAR % SWP_A2D, sPAR % wdorm)  !!negative effect
 
-        ALT_scalar     = fALT_D2A(fdep, tdep, const_soilDepth,sPAR%ALTb,sPAR%ALTc) 
-        ALT_scalar_low = fALT_A2D(fdep, tdep, const_soilDepth,sPAR%ALTb,sPAR%ALTc)
+        ALT_scalar     = fALT_D2A(fdep, tdep, sINI%soilDepth,sPAR%ALTb,sPAR%ALTc, sINI%iALT_type) 
+        ALT_scalar_low = fALT_A2D(fdep, tdep, sINI%soilDepth,sPAR%ALTb,sPAR%ALTc, sINI%iALT_type)
 
         sCase = "MR"
         tp_scalar = fTArh(sCase, tp, const_Tref)
@@ -2330,7 +2330,7 @@ CONTAINS
         !![9] MICROBIAL UPTAKE of NH4 & NO3
         sCase = "NH4"
         tp_scalar = fTArh(sCase, tp, const_Tref)
-        ALT_scalar = fALT_DEC(fdep, tdep, const_soilDepth,sPAR%ALTa)
+        ALT_scalar = fALT_DEC(fdep, tdep, sINI%soilDepth,sPAR%ALTa, sINI%iALT_type)
         !    if(sINI%iTmp_Func.eq.0) then
         !        tp_scalar = fTArh(sCase, tp, const_Tref)
         !    else
@@ -3285,99 +3285,162 @@ CONTAINS
     !! ALT SCALAR: BEGIN !qss:2024/02/02
     !------------------------------------------------------------------
     !------------------------------------------------------------------
-    REAL(8) FUNCTION fALT_DEC(Fdep,Tdep,soilDepth,ALTa) 
+    REAL(8) FUNCTION fALT_DEC(Fdep,Tdep,Depth,ALTa,iALT_type) 
         !! ALT Scalar for available substrate
         !! ALTa = 0.54, ALTb = 0.15
         !! (Hayes et al., 2014, ERL, fig.2)(Liu et al., 2020, GBC, Eq.2)
         !!ARGUMENTS:
-        REAL(8), intent(in):: Fdep, Tdep, soilDepth,ALTa
+        REAL(8), intent(in):: Fdep, Tdep, Depth,ALTa
+        INTEGER, intent(in):: iALT_type
         !!LOCAL VARIABLES
         REAL(8) ALT, ALT_scalar
 
-        ALT = soilDepth
+        if(iALT_type.eq.1) then
+            ALT = 0.0d0
+            ALT_scalar = 0.0d0
 
-        IF (Fdep.gt.0) THEN
-            if (Tdep > 0) then
-                ALT = MAX(Tdep, Tdep + soilDepth - Fdep)
-            else
-                ALT = MAX(soilDepth - Fdep, 0.0d0)
-            end if
-        END IF
+            IF (Tdep.gt.0) THEN
+                if (Fdep.eq.0) then
+                    ALT = MIN(Tdep, Depth)
+                else
+                    ALT = MAX(Depth - Tdep, 0.0d0)
+                end if
+            END IF
 
-        ALT_scalar = MIN(ALT / soilDepth, 1.0d0)
+            ALT_scalar = MIN(ALT / Depth, 1.0d0)
 
-        fALT_DEC = MAX((ALTa + 1.0d0) * ALT_scalar / (ALTa + ALT_scalar), 0.15d0)
+            fALT_DEC = MAX((ALTa + 1.0d0) * ALT_scalar / (ALTa + ALT_scalar), 0.05d0)
 
-        if(Fdep.gt.0 .and. Tdep.eq.0) then
+            if(Tdep.gt.0 .and. Fdep.gt.0) then
+                ALT_scalar = min(Fdep/Depth, 1.0D0)
+                fALT_DEC = max(1.0d0 - ((ALTa + 1.0d0) * ALT_scalar/(ALTa + ALT_scalar)), 0.05d0)
+            endif
+        else
+            ALT = Depth
 
-            ALT_scalar = min(Fdep/soilDepth, 1.0D0)
+            IF (Fdep.gt.0) THEN
+                if (Tdep > 0) then
+                    ALT = MAX(Tdep, Tdep + Depth - Fdep)
+                else
+                    ALT = MAX(Depth - Fdep, 0.0d0)
+                end if
+            END IF
 
-            fALT_DEC = max(1.0d0 - ((ALTa + 1.0d0) * ALT_scalar/(ALTa + ALT_scalar)), 0.15d0)
-        endif
+            ALT_scalar = MIN(ALT / Depth, 1.0d0)
+
+            fALT_DEC = MAX((ALTa + 1.0d0) * ALT_scalar / (ALTa + ALT_scalar), 0.15d0)
+
+            if(Fdep.gt.0 .and. Tdep.eq.0) then
+                ALT_scalar = min(Fdep/Depth, 1.0D0)
+                fALT_DEC = max(1.0d0 - ((ALTa + 1.0d0) * ALT_scalar/(ALTa + ALT_scalar)), 0.15d0)
+            endif
+        end if
 
         return
     END !!fALT_DEC
     !------------------------------------------------------------------
-    REAL(8) FUNCTION fALT_A2D(Fdep,Tdep,soilDepth,ALTb,ALTc) 
+    REAL(8) FUNCTION fALT_A2D(Fdep,Tdep,Depth,ALTb,ALTc,iALT_type) 
         !!ALT Scalar for Microbial Dormancy
         !!fA2D=0, all  active
         !!ARGUMENTS:
-        REAL(8), intent(in):: Fdep, Tdep, soilDepth, ALTb, ALTc
+        REAL(8), intent(in):: Fdep, Tdep, Depth, ALTb, ALTc
+        INTEGER, intent(in):: iALT_type
         !!LOCAL VARIABLES
         REAL(8) ALT, ALT_scalar
 
-        ALT = soilDepth
+        if(iALT_type.eq.1) then
+            ALT = 0.0d0
+            ALT_scalar = 0.0D0
 
-        IF (Fdep > 0) THEN
-            if (Tdep > 0) then
-                ALT = MAX(Tdep, Tdep + soilDepth - Fdep)
-            else
-                ALT = MAX(soilDepth - Fdep, 0.0d0)
-            end if
-        END IF
+            IF (Tdep > 0) THEN
+                if (Fdep == 0) then
+                    ALT = MIN(Tdep, Depth)
+                else
+                    ALT = MAX(Depth - Tdep, 0.0d0)
+                end if
+            END IF
 
-        ALT_scalar = MIN(ALT / soilDepth, 1.0d0)
+            ALT_scalar = MIN(ALT / Depth, 1.0d0)
 
-        fALT_A2D = max(ALTb * (1.0d0-ALT_scalar)/(ALTb + ALT_scalar), ALTc)
+            fALT_A2D = max(ALTb * (1.0d0-ALT_scalar)/(ALTb + ALT_scalar), ALTc)
 
-        if(Fdep.gt.0 .and. Tdep.eq.0) then
+            if(Tdep.gt.0 .and. Fdep.gt.0) then
+                ALT_scalar = min(Fdep/Depth, 1.0D0)
+                fALT_A2D = max(1.0d0 - ((1.0d0 - ALT_scalar)/(ALTb + ALT_scalar)), ALTc)
+            endif
+        else
+            ALT = Depth
 
-            ALT_scalar = min(Fdep/soilDepth, 1.0D0)
+            IF (Fdep > 0) THEN
+                if (Tdep > 0) then
+                    ALT = MAX(Tdep, Tdep + Depth - Fdep)
+                else
+                    ALT = MAX(Depth - Fdep, 0.0d0)
+                end if
+            END IF
 
-            fALT_A2D = max(1.0d0 - ((1.0d0 - ALT_scalar)/(ALTb + ALT_scalar)), ALTc)
-        endif
+            ALT_scalar = MIN(ALT / Depth, 1.0d0)
+
+            fALT_A2D = max(ALTb * (1.0d0-ALT_scalar)/(ALTb + ALT_scalar), ALTc)
+
+            if(Fdep.gt.0 .and. Tdep.eq.0) then
+                ALT_scalar = min(Fdep/Depth, 1.0D0)
+                fALT_A2D = max(1.0d0 - ((1.0d0 - ALT_scalar)/(ALTb + ALT_scalar)), ALTc)
+            endif
+        end if
 
         return
     END !!fALT_A2D
     !------------------------------------------------------------------
-    REAL(8) FUNCTION fALT_D2A(Fdep,Tdep,soilDepth,ALTb,ALTc) 
+    REAL(8) FUNCTION fALT_D2A(Fdep,Tdep,Depth,ALTb,ALTc,iALT_type) 
         !! ALT Scalar for Microbial Reactivation
         !! (Hayes et al., 2014, ERL, fig.2)(Liu et al., 2020, GBC, Eq.2)
         !!ARGUMENTS:
-        REAL(8), intent(in):: Fdep, Tdep, soilDepth, ALTb, ALTc
+        REAL(8), intent(in):: Fdep, Tdep, Depth, ALTb, ALTc
+        INTEGER, intent(in):: iALT_type
         !!LOCAL VARIABLES
         REAL(8) ALT, ALT_scalar
 
-        ALT = soilDepth
+        if(iALT_type.eq.1) then
+            ALT = 0.0d0
+            ALT_scalar = 0.0D0
 
-        IF (Fdep.gt.0) THEN
-            if (Tdep > 0) then
-                ALT = MAX(Tdep, Tdep + soilDepth - Fdep)
-            else
-                ALT = MAX(soilDepth - Fdep, 0.0d0)
-            end if
-        END IF
+            IF (Tdep.gt.0) THEN
+                if (Fdep == 0) then
+                    ALT = MIN(Tdep, Depth)
+                else
+                    ALT = MAX(Depth - Tdep, 0.0d0)
+                end if
+            END IF
 
-        ALT_scalar = MIN(ALT / soilDepth, 1.0d0)
+            ALT_scalar = MIN(ALT / Depth, 1.0d0)
 
-        fALT_D2A = max((ALTb + 1.d0) * ALT_scalar/(ALTb + ALT_scalar), ALTc)
+            fALT_D2A = max((ALTb + 1.d0) * ALT_scalar/(ALTb + ALT_scalar), ALTc)
 
-        if(Fdep.gt.0 .and. Tdep.eq.0) then
+            if(Fdep.gt.0 .and. Tdep.gt.0) then
+                ALT_scalar = min(Fdep/Depth, 1.0D0)
+                fALT_D2A = max(1.0d0-((ALTb + 1.d0) * ALT_scalar/(ALTb + ALT_scalar)), ALTc)
+            endif
+        else
+            ALT = Depth
 
-            ALT_scalar = min(Fdep/soilDepth, 1.0D0)
+            IF (Fdep.gt.0) THEN
+                if (Tdep > 0) then
+                    ALT = MAX(Tdep, Tdep + Depth - Fdep)
+                else
+                    ALT = MAX(Depth - Fdep, 0.0d0)
+                end if
+            END IF
 
-            fALT_D2A = max(1.0d0-((ALTb + 1.d0) * ALT_scalar/(ALTb + ALT_scalar)), ALTc)
-        endif
+            ALT_scalar = MIN(ALT / Depth, 1.0d0)
+
+            fALT_D2A = max((ALTb + 1.d0) * ALT_scalar/(ALTb + ALT_scalar), ALTc)
+
+            if(Fdep.gt.0 .and. Tdep.eq.0) then
+                ALT_scalar = min(Fdep/Depth, 1.0D0)
+                fALT_D2A = max(1.0d0-((ALTb + 1.d0) * ALT_scalar/(ALTb + ALT_scalar)), ALTc)
+            endif
+        end if
 
         return
     END !!fALT_D2A  mark0304
@@ -4893,4 +4956,3 @@ CONTAINS
 
 !end module TMEND           
 END MODULE MOD_MEND
-

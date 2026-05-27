@@ -16,6 +16,11 @@
 !!Carbon_only ("C") or Carbon-Nitrogen ("CN") 
     ssMEND = 'CN'
 
+!!ALT frozen-soil scheme
+!! iALT_type = 0: seasonally frozen soil (current Haibei formulation)
+!! iALT_type = 1: permafrost (Beiluhe formulation)
+    iALT_type = 0
+
 !!select a range of rows to compute obj for iModel=3 (Sobol Sensitivity)
 !! iSA_range(1:2) = begin:end id; 
 !! iSA_range(3) = 0 means continuous parameter sets with the first id = 1; calculate obj for id between iSA_range(1:2)  

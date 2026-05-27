@@ -76,6 +76,7 @@ SUBROUTINE MENDIN(sSCE,sINI)
     REAL(8)             :: Altitude, GPPref
     INTEGER             :: iGPPscaler
     integer             :: iModel
+    integer             :: iALT_type
     integer             :: iSA_range(3)
     CHARACTER(len=3)    :: ssMEND
     CHARACTER(len=20)   :: Dir_Input, Dir_Output
@@ -141,7 +142,7 @@ SUBROUTINE MENDIN(sSCE,sINI)
     !    CHARACTER(len=256) format650
     !    CHARACTER(len=sSCE%OPT_all_line_length + 1):: sline
 
-    namelist /mend_config/ sSite, sBIOME, sSOM, iModel, ssMEND, iSA_range, Altitude,GPPref, iGPPscaler, &
+    namelist /mend_config/ sSite, sBIOME, sSOM, iModel, iALT_type, ssMEND, iSA_range, Altitude,GPPref, iGPPscaler, &
         Dir_Input, Dir_Output, &
         ssDate_beg_all, ssDate_end_all, ssDate_beg_sim, ssDate_end_sim, &
         ifdata_ST, sUnits_ST, step_ST, nfile_ST, sfilename_ST, ST_constant, &
@@ -227,6 +228,8 @@ SUBROUTINE MENDIN(sSCE,sINI)
       
     !!--------------------------------------------------------------------------------------
     !Read the MEND namelist
+    iALT_type = 0
+
     open (10,file="MEND_namelist.nml",status='OLD',recl=80,delim='APOSTROPHE')
 
     read(10,nml=mend_config, iostat=ierr,iomsg=msg)
@@ -243,9 +246,15 @@ SUBROUTINE MENDIN(sSCE,sINI)
     sINI%BIOME = sBIOME
     sINI%SOM = sSOM
     sINI%iModel = iModel
+    sINI%iALT_type = iALT_type
     sINI%iSA_range = iSA_range
     
     sINI%iError = 0
+
+    if(sINI%iALT_type.lt.0 .or. sINI%iALT_type.gt.1) then
+        print*,"Namelist Error: iALT_type must be 0 (seasonally frozen soil) or 1 (permafrost)"
+        stop
+    end if
 
     
     if(StrCompress(ssMEND).eq.'C') then
@@ -603,7 +612,7 @@ SUBROUTINE MENDIN(sSCE,sINI)
     
     sfilename_full = trim(sINI%dirinp)//trim(sINI%SOIL_INI_file)
     call subMEND_INI_Read(sINI%dINI,sfilename_full)
-    sINI % soilDepth    = sINI%dINI(1)  !![cm], soil depth
+    sINI % soilDepth    = sINI%dINI(1)  !![cm], Depth in SOIL_INI.dat
     !      write(*,*)"dINI=",sINI%dINI
       
     sINI%iGPPscaler = iGPPscaler
@@ -613,6 +622,7 @@ SUBROUTINE MENDIN(sSCE,sINI)
         write(sSCE%iFout_ini,*)
         write(sSCE%iFout_ini,*)"sINI%iModel = ", sINI%iModel
         write(sSCE%iFout_ini,*)"Carbon (C) or Carbon-Nitrogen (CN) Model = ", ssMEND
+        write(sSCE%iFout_ini,*)"sINI%iALT_type = ", sINI%iALT_type," (0: seasonal frozen soil, 1: permafrost)"
         write(sSCE%iFout_ini,*)"sINI%iKinetics = ", sINI%iKinetics
         write(sSCE%iFout_ini,*)"sINI%iHR       = ", sINI%iHR
         write(sSCE%iFout_ini,*)"sINI%iTmp_Func = ", sINI%iTmp_Func
@@ -961,4 +971,3 @@ SUBROUTINE MENDIN(sSCE,sINI)
 
     return
 END !!SUBROUTINE MENDIN
-

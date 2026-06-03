@@ -14,7 +14,7 @@ MODULE MOD_MEND_TYPE
     INTEGER, PARAMETER:: const_nPAR         = 66                    !# of parameters in sMEND_PAR
     INTEGER, PARAMETER:: const_nPAR0        = 51                    !# of parameters for calibration
     INTEGER, PARAMETER:: const_nVAR0        = 46                    !# of variables for calibration
-    INTEGER, PARAMETER:: const_nRATE        = 45                    !# of derived rates in '*_RATE_*.out', 19
+    INTEGER, PARAMETER:: const_nRATE        = 47                    !# of derived rates in '*_RATE_*.out', 19
     
     INTEGER, PARAMETER:: const_nPOM = 2                             !# of particular organic carbon pools
     INTEGER, PARAMETER:: const_nISO = 2                             !# of isotopes, e.g., C12, C14, C13
@@ -461,6 +461,7 @@ MODULE MOD_MEND_TYPE
         REAL(8), ALLOCATABLE:: dOBS_opt(:, :)          !date,obs,iVARopt
         REAL(8), ALLOCATABLE:: dSIM_opt(:, :)          !date,sim,sim_sd
         REAL(8), ALLOCATABLE:: STP(:)                  ![C], soil temperature
+        REAL(8), ALLOCATABLE:: STP_FT(:)               ![C], soil temperature used only for freeze-thaw front generation
         REAL(8), ALLOCATABLE:: Fdep(:)                 ![cm], frozen depth (mark0303)
         REAL(8), ALLOCATABLE:: Tdep(:)                 ![cm], thaw depth (mark0303)
         REAL(8), ALLOCATABLE:: SWC(:)                  ![fraction],soil water content

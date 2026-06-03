@@ -74,6 +74,7 @@ MODULE MOD_MEND
     PUBLIC:: fpH
     PUBLIC:: fpH0
     PUBLIC:: fPermil
+    PUBLIC:: subFreezeThawFront_Generate
     
     PUBLIC:: fTort
     PUBLIC:: subDiffusivity
@@ -775,9 +776,439 @@ CONTAINS
             phi,rMBa, CUE, NUE,rNH4,sINI%fDOM,sINI%fNO3_Leaching,sINI%VNup_VG_GPPscaler,&
             EA_POM,EA_MOM,EA_NFix,EA_Nit,EA_Denit,kNFix,kNit,kDenit, &
             sOUT%CPOOL%TM_err,sINP%CPOOL%TM,sOUT%CPOOL%TM,sOUT%CFLUX%TOTinp,sOUT%CFLUX%TOTout,&
-            sINP%tmp, sINP%SWC, sINP%SWP, sINP%pH
+            sINP%tmp, sINP%SWC, sINP%SWP, sINP%pH, sINP%Fdep, sINP%Tdep
     !    end if
     END !!subroutine subMEND_output_rate
+
+    !-----------------------------------------------------------------------------
+    SUBROUTINE subFreezeThawFront_Generate(sINI)
+        TYPE(sMEND_INI), intent(inout) :: sINI
+
+        INTEGER :: ndays
+        INTEGER :: i, j, k
+        REAL(8), ALLOCATABLE :: STP_day(:), SWC_day(:), STP_smooth(:)
+        REAL(8), ALLOCATABLE :: Fdep_raw(:), Tdep_raw(:), Fdep_final(:), Tdep_final(:)
+
+        ndays = nDaysbwDates(sINI%sDate_beg_all, sINI%sDate_end_all)
+        if (ndays .le. 0) return
+
+        ALLOCATE(STP_day(ndays), SWC_day(ndays), STP_smooth(ndays))
+        ALLOCATE(Fdep_raw(ndays), Tdep_raw(ndays), Fdep_final(ndays), Tdep_final(ndays))
+
+        do i = 1, ndays
+            k = (i - 1) * 24
+            STP_day(i) = sum(sINI%STP_FT(k + 1:k + 24)) / 24.d0
+            SWC_day(i) = sum(sINI%SWC(k + 1:k + 24)) / 24.d0
+        end do
+
+        CALL subFT_SmoothCentered(STP_day, 10, STP_smooth)
+        CALL subFT_ComputeRawFronts(sINI%sDate_beg_all, STP_smooth, SWC_day, Fdep_raw, Tdep_raw)
+        CALL subFT_CorrectFronts(sINI%iALT_type, Tdep_raw, Fdep_raw, Tdep_final, Fdep_final)
+
+        do i = 1, ndays
+            do j = 1, 24
+                k = (i - 1) * 24 + j
+                sINI%Fdep(k) = Fdep_final(i)
+                sINI%Tdep(k) = Tdep_final(i)
+            end do
+        end do
+
+        DEALLOCATE(STP_day, SWC_day, STP_smooth)
+        DEALLOCATE(Fdep_raw, Tdep_raw, Fdep_final, Tdep_final)
+    END !!subFreezeThawFront_Generate
+
+    !-----------------------------------------------------------------------------
+    SUBROUTINE subFT_SmoothCentered(x, window, y)
+        REAL(8), intent(in) :: x(:)
+        INTEGER, intent(in) :: window
+        REAL(8), intent(out) :: y(size(x))
+
+        INTEGER :: i, ibeg, iend
+        INTEGER :: left_span, right_span
+
+        left_span = (window - 1) / 2
+        right_span = window - left_span - 1
+
+        do i = 1, size(x)
+            ibeg = max(1, i - left_span)
+            iend = min(size(x), i + right_span)
+            y(i) = sum(x(ibeg:iend)) / DBLE(iend - ibeg + 1)
+        end do
+    END !!subFT_SmoothCentered
+
+    !-----------------------------------------------------------------------------
+    SUBROUTINE subFT_ComputeRawFronts(sDate_beg, STP_day, SWC_day, Fdep_raw, Tdep_raw)
+        CHARACTER(LEN=8), intent(in) :: sDate_beg
+        REAL(8), intent(in) :: STP_day(:), SWC_day(:)
+        REAL(8), intent(out) :: Fdep_raw(size(STP_day)), Tdep_raw(size(STP_day))
+
+        REAL(8), PARAMETER :: FT_th = 86400.d0
+        REAL(8), PARAMETER :: FT_Lf = 3.337d5
+        REAL(8), PARAMETER :: FT_density = 1000.d0
+        REAL(8), PARAMETER :: FT_swc_sat = 0.5d0
+        REAL(8), PARAMETER :: FT_half_sand = 0.2d0
+        REAL(8), PARAMETER :: FT_BD = 0.9d0
+        REAL(8), PARAMETER :: FT_eps = 1.d-6
+
+        INTEGER :: n, i, iyr, imo, ida
+        INTEGER :: ibeg, iend, thaw_start, thaw_end, count, candidate_end
+        INTEGER, ALLOCATABLE :: years(:)
+        REAL(8), ALLOCATABLE :: DDT(:), DDF(:), Ts_year(:), Ts_frozen_work(:)
+        REAL(8) :: kt, kf
+        CHARACTER(LEN=8) :: sDate
+
+        n = size(STP_day)
+        Fdep_raw = 0.d0
+        Tdep_raw = 0.d0
+
+        ALLOCATE(years(n), DDT(n), DDF(n), Ts_frozen_work(n))
+        DDT = 0.d0
+        DDF = 0.d0
+        Ts_frozen_work = STP_day
+
+        do i = 1, n
+            CALL sDate_After(i, sDate_beg, sDate)
+            CALL sDate2YMD(sDate, iyr, imo, ida)
+            years(i) = iyr
+        end do
+
+        ibeg = 1
+        do while (ibeg .le. n)
+            iend = ibeg
+            do while (iend .lt. n .and. years(iend + 1) .eq. years(ibeg))
+                iend = iend + 1
+            end do
+
+            ALLOCATE(Ts_year(iend - ibeg + 1))
+            Ts_year = STP_day(ibeg:iend)
+
+            thaw_start = 0
+            thaw_end = 0
+            count = 0
+            do i = 1, size(Ts_year)
+                if (Ts_year(i) .ge. 0.d0) count = count + 1
+                if (count .eq. 7) then
+                    thaw_start = i - 6
+                    exit
+                end if
+            end do
+
+            if (thaw_start .gt. 0) then
+                count = 0
+                do i = thaw_start + 1, size(Ts_year)
+                    if (Ts_year(i) .lt. 0.d0) then
+                        count = count + 1
+                    else
+                        count = 0
+                    end if
+                    if (count .eq. 7) then
+                        candidate_end = i - 6
+                        if (candidate_end - thaw_start .ge. 30) then
+                            thaw_end = candidate_end
+                            exit
+                        end if
+                    end if
+                end do
+                if (thaw_end .eq. 0) thaw_end = size(Ts_year) + 1
+
+                CALL subFT_FillDDT(Ts_year, thaw_start, thaw_end, DDT(ibeg:iend))
+                Ts_frozen_work(ibeg + thaw_start - 1:ibeg + thaw_end - 2) = 0.d0
+            else
+                continue
+            end if
+
+            DEALLOCATE(Ts_year)
+            ibeg = iend + 1
+        end do
+
+        CALL subFT_FillDDF(Ts_frozen_work, DDF)
+
+        do i = 1, n
+            kt = fFT_get_kt(SWC_day(i), FT_swc_sat, FT_half_sand, FT_BD)
+            kf = fFT_get_kf(SWC_day(i), FT_swc_sat, FT_half_sand, FT_BD)
+            Tdep_raw(i) = 100.d0 * dsqrt(max(0.d0, 2.d0 * kt * FT_th * DDT(i) / (FT_Lf * FT_density * max(SWC_day(i), FT_eps))))
+            Fdep_raw(i) = 100.d0 * dsqrt(max(0.d0, 2.d0 * kf * FT_th * DDF(i) / (FT_Lf * FT_density * max(SWC_day(i), FT_eps))))
+        end do
+
+        DEALLOCATE(years, DDT, DDF, Ts_frozen_work)
+    END !!subFT_ComputeRawFronts
+
+    !-----------------------------------------------------------------------------
+    SUBROUTINE subFT_FillDDT(Ts_year, thaw_start, thaw_end, DDT_year)
+        REAL(8), intent(in) :: Ts_year(:)
+        INTEGER, intent(in) :: thaw_start, thaw_end
+        REAL(8), intent(out) :: DDT_year(size(Ts_year))
+
+        INTEGER :: i, iend
+        REAL(8) :: tsum
+
+        DDT_year = 0.d0
+        if (thaw_start .le. 0) return
+
+        iend = min(thaw_end - 1, size(Ts_year))
+        tsum = 0.d0
+        do i = thaw_start, iend
+            if (Ts_year(i) .gt. 0.d0) then
+                tsum = tsum + Ts_year(i)
+                DDT_year(i) = tsum
+            end if
+        end do
+    END !!subFT_FillDDT
+
+    !-----------------------------------------------------------------------------
+    SUBROUTINE subFT_FillDDF(Ts_work, DDF_series)
+        REAL(8), intent(in) :: Ts_work(:)
+        REAL(8), intent(out) :: DDF_series(size(Ts_work))
+
+        INTEGER :: i
+        REAL(8) :: tsum
+
+        tsum = 0.d0
+        do i = 1, size(Ts_work)
+            if (Ts_work(i) .eq. 0.d0) then
+                tsum = 0.d0
+                DDF_series(i) = 0.d0
+            else
+                tsum = tsum - Ts_work(i)
+                DDF_series(i) = tsum
+            end if
+        end do
+    END !!subFT_FillDDF
+
+    !-----------------------------------------------------------------------------
+    SUBROUTINE subFT_CorrectFronts(iALT_type, thaw_raw, frozen_raw, thaw_final, frozen_final)
+        INTEGER, intent(in) :: iALT_type
+        REAL(8), intent(in) :: thaw_raw(:), frozen_raw(:)
+        REAL(8), intent(out) :: thaw_final(size(thaw_raw)), frozen_final(size(frozen_raw))
+
+        INTEGER :: i, npairs
+        INTEGER :: nstart, nend
+        INTEGER, ALLOCATABLE :: start_idx(:), end_idx(:)
+
+        thaw_final = thaw_raw
+        frozen_final = frozen_raw
+
+        ALLOCATE(start_idx(size(thaw_raw)), end_idx(size(thaw_raw)))
+        start_idx = 0
+        end_idx = 0
+        nstart = 0
+        nend = 0
+
+        if (iALT_type .eq. 0) then
+            do i = 1, size(frozen_final) - 1
+                if (frozen_final(i) .gt. 0.d0 .and. frozen_final(i + 1) .eq. 0.d0) then
+                    frozen_final(i + 1) = frozen_final(i)
+                end if
+            end do
+
+            do i = 2, size(thaw_final) - 1
+                if (thaw_final(i) .gt. 0.d0) then
+                    if ((frozen_final(i - 1) .gt. thaw_final(i - 1) .and. frozen_final(i + 1) .lt. thaw_final(i + 1)) .or. &
+                        (frozen_final(i - 1) .gt. thaw_final(i - 1) .and. thaw_final(i + 1) .eq. 0.d0)) then
+                        if (nstart .eq. 0 .or. i - start_idx(nstart) .ge. 100) then
+                            nstart = nstart + 1
+                            start_idx(nstart) = i
+                        end if
+                    end if
+                else if (i .ge. 3) then
+                    if (frozen_final(i - 2) .eq. frozen_final(i - 1) .and. frozen_final(i - 1) .gt. 0.d0 .and. &
+                        frozen_final(i + 1) .gt. frozen_final(i)) then
+                        if (nend .eq. 0 .or. i - end_idx(nend) .ge. 100) then
+                            nend = nend + 1
+                            end_idx(nend) = i + 1
+                        end if
+                    end if
+                end if
+            end do
+        else
+            do i = 1, size(thaw_final) - 1
+                if (thaw_final(i) .gt. 0.d0 .and. thaw_final(i + 1) .eq. 0.d0) then
+                    thaw_final(i + 1) = thaw_final(i)
+                end if
+            end do
+
+            do i = 2, size(thaw_final) - 1
+                if (frozen_final(i) .gt. 0.d0) then
+                    if ((frozen_final(i - 1) .lt. thaw_final(i - 1) .and. frozen_final(i + 1) .gt. thaw_final(i + 1)) .or. &
+                        (frozen_final(i - 1) .lt. thaw_final(i - 1) .and. frozen_final(i + 1) .eq. 0.d0)) then
+                        if (nstart .eq. 0 .or. i - start_idx(nstart) .ge. 100) then
+                            nstart = nstart + 1
+                            start_idx(nstart) = i
+                        end if
+                    end if
+                else if (frozen_final(i - 1) .gt. 0.d0 .and. frozen_final(i + 1) .eq. 0.d0) then
+                    if (nend .eq. 0 .or. i - end_idx(nend) .ge. 100) then
+                        nend = nend + 1
+                        end_idx(nend) = i
+                    end if
+                end if
+            end do
+
+            if (nend .gt. 0) then
+                if (nend .gt. 1) end_idx(1:nend - 1) = end_idx(2:nend)
+                nend = nend - 1
+            end if
+        end if
+
+        npairs = min(nstart, nend)
+        do i = 1, npairs
+            if (end_idx(i) .gt. start_idx(i)) then
+                frozen_final(start_idx(i):end_idx(i) - 1) = 0.d0
+                thaw_final(start_idx(i):end_idx(i) - 1) = 0.d0
+            end if
+        end do
+
+        if (iALT_type .eq. 0) then
+            CALL subFT_PostprocessSeasonal(thaw_final, frozen_final)
+        else
+            CALL subFT_PostprocessPermafrost(thaw_final, frozen_final)
+        end if
+
+        DEALLOCATE(start_idx, end_idx)
+    END !!subFT_CorrectFronts
+
+    !-----------------------------------------------------------------------------
+    SUBROUTINE subFT_PostprocessSeasonal(thaw_final, frozen_final)
+        REAL(8), intent(inout) :: thaw_final(:), frozen_final(:)
+
+        INTEGER :: i, n
+        INTEGER :: first_beg, first_end
+        INTEGER :: last_beg, last_end
+        LOGICAL :: has_prev_frozen
+
+        n = size(thaw_final)
+
+        first_beg = 0
+        first_end = 0
+        do i = 1, n
+            if (thaw_final(i) .gt. 0.d0) then
+                first_beg = i
+                first_end = i
+                do while (first_end .lt. n .and. thaw_final(first_end + 1) .gt. 0.d0)
+                    first_end = first_end + 1
+                end do
+                exit
+            end if
+        end do
+
+        if (first_beg .gt. 0) then
+            has_prev_frozen = .false.
+            if (first_beg .gt. 1) has_prev_frozen = any(frozen_final(1:first_beg - 1) .gt. 0.d0)
+            if (.not. has_prev_frozen) then
+                thaw_final(first_beg:first_end) = 0.d0
+                frozen_final(first_beg:first_end) = 0.d0
+            end if
+        end if
+
+        last_beg = 0
+        last_end = 0
+        do i = n, 1, -1
+            if (thaw_final(i) .gt. 0.d0) then
+                last_end = i
+                last_beg = i
+                do while (last_beg .gt. 1 .and. thaw_final(last_beg - 1) .gt. 0.d0)
+                    last_beg = last_beg - 1
+                end do
+                exit
+            end if
+        end do
+
+        if (last_beg .gt. 0) then
+            do i = last_beg, last_end
+                if (thaw_final(i) .ge. frozen_final(i)) then
+                    thaw_final(i:last_end) = 0.d0
+                    frozen_final(i:last_end) = 0.d0
+                    exit
+                end if
+            end do
+        end if
+    END !!subFT_PostprocessSeasonal
+
+    !-----------------------------------------------------------------------------
+    SUBROUTINE subFT_PostprocessPermafrost(thaw_final, frozen_final)
+        REAL(8), intent(inout) :: thaw_final(:), frozen_final(:)
+
+        INTEGER :: i, n
+        INTEGER :: first_beg, first_end
+        LOGICAL :: has_prev_thaw
+
+        n = size(frozen_final)
+
+        first_beg = 0
+        first_end = 0
+        do i = 1, n
+            if (frozen_final(i) .gt. 0.d0) then
+                first_beg = i
+                first_end = i
+                do while (first_end .lt. n .and. frozen_final(first_end + 1) .gt. 0.d0)
+                    first_end = first_end + 1
+                end do
+                exit
+            end if
+        end do
+
+        if (first_beg .gt. 0) then
+            has_prev_thaw = .false.
+            if (first_beg .gt. 1) has_prev_thaw = any(thaw_final(1:first_beg - 1) .gt. 0.d0)
+            if (.not. has_prev_thaw) then
+                thaw_final(first_beg:first_end) = 0.d0
+                frozen_final(first_beg:first_end) = 0.d0
+            end if
+        end if
+
+        do i = 1, n
+            if (frozen_final(i) .gt. 0.d0 .and. thaw_final(i) .eq. 0.d0) then
+                thaw_final(i) = 0.d0
+                frozen_final(i) = 0.d0
+            end if
+        end do
+    END !!subFT_PostprocessPermafrost
+
+    !-----------------------------------------------------------------------------
+    REAL(8) FUNCTION fFT_get_kt(swc_liq, swc_sat, half_sand, BD)
+        REAL(8), intent(in) :: swc_liq, swc_sat, half_sand, BD
+
+        REAL(8) :: Sr, Ke, r0, solids, ksat, kdry
+
+        Sr = min(max(swc_liq / swc_sat, 1.d-6), 1.d0)
+        if (Sr .gt. 0.1d0) then
+            Ke = dlog10(Sr) + 1.d0
+        else
+            Ke = 0.7d0 * dlog10(Sr) + 1.d0
+        end if
+
+        if (half_sand .gt. 0.2d0) then
+            r0 = 2.d0
+        else
+            r0 = 3.d0
+        end if
+
+        solids = 7.7d0**half_sand * r0**(1.d0 - half_sand)
+        ksat = solids**(1.d0 - swc_sat) * 0.57d0**swc_liq * 2.2d0**(swc_sat - swc_liq)
+        kdry = (0.135d0 * BD + 64.7d0) / (2700.d0 - 0.947d0 * BD)
+        fFT_get_kt = (ksat - kdry) * Ke + kdry
+    END !!fFT_get_kt
+
+    !-----------------------------------------------------------------------------
+    REAL(8) FUNCTION fFT_get_kf(swc_liq, swc_sat, half_sand, BD)
+        REAL(8), intent(in) :: swc_liq, swc_sat, half_sand, BD
+
+        REAL(8) :: Sr, Ke, r0, solids, ksat, kdry
+
+        Sr = swc_liq / swc_sat
+        Ke = Sr
+
+        if (half_sand .gt. 0.2d0) then
+            r0 = 2.d0
+        else
+            r0 = 3.d0
+        end if
+
+        solids = 7.7d0**half_sand * r0**(1.d0 - half_sand)
+        ksat = solids**(1.d0 - swc_sat) * 0.57d0**swc_liq * 2.2d0**(swc_sat - swc_liq)
+        kdry = (0.135d0 * BD + 64.7d0) / (2700.d0 - 0.947d0 * BD)
+        fFT_get_kf = (ksat - kdry) * Ke + kdry
+    END !!fFT_get_kf
 
     !-----------------------------------------------------------------------------
     SUBROUTINE subMEND_RUN(xx, sPAR, sINI, sOUT)
@@ -3444,103 +3875,6 @@ CONTAINS
 
         return
     END !!fALT_D2A  mark0304
-    !------------------------------------------------------------------
-    ! REAL(8) FUNCTION fZt(Kt,th,Lf,ICEdensity,SWC_mean,DDT,ALT0) 
-    !     !! Thaw depth (ALT)
-    !     !! Stefan solution 
-    !     !!ARGUMENTS:
-    !     REAL(8), intent(in):: Kt, th, Lf, ICEdensity, ALT0
-    !     REAL(8), intent(in):: SWC_mean
-    !     !!LOCAL VARIABLES
-        
-    !     fZt = dsqrt(2.d0*Kt*th*DDT /(Lf*ICEdensity*SWC_mean)) * 100 + ALT0  !unit: cm
-
-    !     return
-    ! END !!fZt
-    !------------------------------------------------------------------
-    ! REAL(8) FUNCTION fDDT(date,STP)
-    !     !! Thawing index
-    !     !!ARGUMENTS:
-    !     REAL(8), intent(in):: date(:), STP(:)
-    !     REAL(8), DIMENSION(size(STP)):: ddt_list
-    !     REAL(8), DIMENSION(size(STP)):: year_data !iYear
-    !     REAL(8) n, year, i, count
-    !     REAL(8) thawing_start, thawing_end !thawing period
-
-    !     n = size(STP)
-
-    !     ddt_list = 0.d0
-    !     year_data = 0.d0
-
-    !     do year = minval(date), maxval(date)
-    !        count = 0
-    !        thawing_start = 0
-    !        thawing_end = 0
-
-    !        do i = 1, n
-    !           if (year == int(date(i))) then
-    !              if (STP(i) >= 0.0) then
-    !                count = count + 1
-    !              elseif (STP(i) < 0.0) then
-    !                if (count < 7) then
-    !                    count = 0
-    !                 else
-    !                    thawing_end = i
-    !                    count = 0
-    !                 end if
-    !              end if
-    !              if (count == 7) then
-    !                 thawing_start = i - 6
-    !              end if
-    !           end if
-    !         end do
-
-    !         if (thawing_start > 0 .and. thawing_end > 0) then
-    !            STP(thawing_start:thawing_end) = fTcum(STP(thawing_start:thawing_end))
-    !         end if
-
-    !         STP(1:thawing_start-1) = 0.0
-    !         STP(thawing_end+1:n) = 0.0
-
-    !         ddt_list = ddt_list + STP
-    !     end do
-
-    !     ddt_list = round(ddt_list)
-    !     return
-    ! END !!fDDT
-    ! !------------------------------------------------------------------
-    ! REAL(8) function fTcum(STP)
-    !     !! cumulative STP, for DDT calculation
-    !     !!ARGUMENTS:
-    !     REAL(8), intent(in):: STP(:)
-    !     REAL(8), DIMENSION(size(STP)):: TcumArray
-    !     integer :: i
-    !     real :: sum
-
-    !     sum = 0
-
-    !     do i = 1, size(STP)
-    !        sum = sum + STP(i)
-    !        TcumArray(i) = sum
-    !     end do
-
-    ! END !!fTcum
-    !------------------------------------------------------------------   
-    ! REAL(8) FUNCTION fKt(SWCres,SWCsat,half_Sand,BD)
-    !     !! Soil thermal conductivity [W m-1 K-1]
-    !     !! Johansen (1975) model
-
-    !     Sr = SWCres/SWCsat  !degree of saturation
-    !     Ke = dlog10(Sr) + 1.D0  !Kersten number for unfrozen soils
-
-    !     Ks = 7.7d0**half_Sand * 2.d0**(1-half_Sand) !solids thermal conductivity
-
-
-    !     Kdry = (0.135d0*BD + 64.7d0)/(2700-0.947d0*BD) !dry thermal conductivity, BD: bulk density
-
-    !     fKt = Ke*(Ksat-Kdry)+Kdry
-    !     return
-    ! END !!fKt
     !------------------------------------------------------------------
     !! ALT Scalar: END
     !!=================================================================

@@ -19,7 +19,7 @@ SUBROUTINE MENDIN(sSCE,sINI)
 #endif
     USE MOD_OPT_TYPE
     USE MOD_MEND_TYPE
-    USE MOD_MEND,   only: fSWC2SWP,fSWP2SWC,sINP_Read,subMEND_INI_Read
+    USE MOD_MEND,   only: fSWC2SWP,fSWP2SWC,sINP_Read,subMEND_INI_Read,subFreezeThawFront_Generate
     USE MOD_MEND,   only: sOUT_ALL_tscale,subMEND_Files_Open!!sOUT_OPT  !!function
     USE MOD_String, only: StrCompress
     USE MOD_USRFS,  only: nDaysbwDates,nMonsbwDates,nDaysofMon
@@ -82,12 +82,13 @@ SUBROUTINE MENDIN(sSCE,sINI)
     CHARACTER(len=20)   :: Dir_Input, Dir_Output
     character(len=8)    :: ssDate_beg_all, ssDate_end_all, ssDate_beg_sim, ssDate_end_sim
 
-    character(len=20)   :: sfilename_ST(20), sfilename_SM(20), sfilename_type1(20), sfilename_type3(20), sfilename_pH(20)
+    character(len=20)   :: sfilename_ST(20), sfilename_STP_FT(20), sfilename_SM(20)
+    character(len=20)   :: sfilename_type1(20), sfilename_type3(20), sfilename_pH(20)
     character(len=20)   :: sfilename_Fdep(20), sfilename_Tdep(20)
-    integer             :: ifdata_ST, nfile_ST
+    integer             :: ifdata_ST, nfile_ST, ifdata_STP_FT, nfile_STP_FT
     integer             :: ifdata_Fdep, nfile_Fdep, ifdata_Tdep, nfile_Tdep    
-    character(len=10)   :: sUnits_ST, sUnits_Fdep, sUnits_Tdep
-    character(len=10)   :: step_ST, step_Fdep, step_Tdep
+    character(len=10)   :: sUnits_ST, sUnits_STP_FT, sUnits_Fdep, sUnits_Tdep
+    character(len=10)   :: step_ST, step_STP_FT, step_Fdep, step_Tdep
 
     real(8)             :: vg_SWCres,vg_SWCsat,vg_alpha,vg_n, Ksat, Lambda!!van-Genuchten equation
     integer             :: ifdata_SM, nfile_SM
@@ -146,6 +147,7 @@ SUBROUTINE MENDIN(sSCE,sINI)
         Dir_Input, Dir_Output, &
         ssDate_beg_all, ssDate_end_all, ssDate_beg_sim, ssDate_end_sim, &
         ifdata_ST, sUnits_ST, step_ST, nfile_ST, sfilename_ST, ST_constant, &
+        ifdata_STP_FT, sUnits_STP_FT, step_STP_FT, nfile_STP_FT, sfilename_STP_FT, &
         ifdata_Fdep, sUnits_Fdep, step_Fdep, nfile_Fdep, sfilename_Fdep, Fdep_constant, &
         ifdata_Tdep, sUnits_Tdep, step_Tdep, nfile_Tdep, sfilename_Tdep, Tdep_constant, &
         vg_SWCres, vg_SWCsat, vg_alpha, vg_n, Ksat,Lambda,&
@@ -211,7 +213,7 @@ SUBROUTINE MENDIN(sSCE,sINI)
         "EA_NFix","EA_Nit","EA_Denit_NO3","EA_Denit_NO2","EA_Denit_NO","EA_Denit_N2O",&
         "kNFix","kNit","kDenit_NO3","kDenit_NO2","kDenit_NO","kDenit_N2O",&
         "TM_err","TMbeg","TMend","TOTinp","TOTout", &
-        "STP", "SWC", "SWP", "pH"/
+        "STP", "SWC", "SWP", "pH", "Fdep_final", "Tdep_final"/
     !!VARIABLES NAMES FOR OUTPUT FILES: END
     !!--------------------------------------------------------------------------------------
     !    if (sINI%pid.eq.0) write (*,*) '>>ENTER SUBROUTINE <MEND_INI>'
@@ -494,6 +496,7 @@ SUBROUTINE MENDIN(sSCE,sINI)
     sINI%nHour = ndays*24
     sINI%nHour_sim = 24*nDaysbwDates(sINI%sDate_beg_sim,sINI%sDate_end_sim)
     ALLOCATE(sINI%STP(sINI%nHour))
+    ALLOCATE(sINI%STP_FT(sINI%nHour))
     ALLOCATE(sINI%Fdep(sINI%nHour))
     ALLOCATE(sINI%Tdep(sINI%nHour))
     ALLOCATE(sINI%SWC(sINI%nHour))
@@ -514,24 +517,19 @@ SUBROUTINE MENDIN(sSCE,sINI)
         sINI%STP = ST_constant
     end if
 
-    !!Soil frost and thaw depth data
-    if(ifdata_Fdep.eq.1) then  !!read data
-        sUnits = StrCompress(sUnits_Fdep)
-        ststep = StrCompress(step_Fdep)  !!TODO NEXT: convert data with time-step (ststep=monthly,daily) to hourly
+    !!Soil temperature data used only for freeze-thaw front generation
+    if(ifdata_STP_FT.eq.1) then
+        sUnits = StrCompress(sUnits_STP_FT)
+        ststep = StrCompress(step_STP_FT)
         is_total = 0
-        CALL sINP_Read(nfile_Fdep,sfilename_Fdep,sINI%dirinp,ststep,is_total,nmons,sINI%nHour,sINI%Fdep)
-    else  !!constant depth
-        sINI%Fdep = Fdep_constant
+        CALL sINP_Read(nfile_STP_FT,sfilename_STP_FT,sINI%dirinp,ststep,is_total,nmons,sINI%nHour,sINI%STP_FT)
+    else
+        sINI%STP_FT = sINI%STP
     end if
 
-    if(ifdata_Tdep.eq.1) then  !!read data
-        sUnits = StrCompress(sUnits_Tdep)
-        ststep = StrCompress(step_Tdep)  !!TODO NEXT: convert data with time-step (ststep=monthly,daily) to hourly
-        is_total = 0
-        CALL sINP_Read(nfile_Tdep,sfilename_Tdep,sINI%dirinp,ststep,is_total,nmons,sINI%nHour,sINI%Tdep)
-    else  !!constant depth
-        sINI%Tdep = Tdep_constant
-    end if
+    !!Soil frost and thaw depth are generated internally from STP and SWC.
+    sINI%Fdep = 0.d0
+    sINI%Tdep = 0.d0
       
     !!Soil water info: Hourly or Daily
       
@@ -613,6 +611,7 @@ SUBROUTINE MENDIN(sSCE,sINI)
     sfilename_full = trim(sINI%dirinp)//trim(sINI%SOIL_INI_file)
     call subMEND_INI_Read(sINI%dINI,sfilename_full)
     sINI % soilDepth    = sINI%dINI(1)  !![cm], Depth in SOIL_INI.dat
+    CALL subFreezeThawFront_Generate(sINI)
     !      write(*,*)"dINI=",sINI%dINI
       
     sINI%iGPPscaler = iGPPscaler

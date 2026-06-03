@@ -28,3 +28,4 @@ userio/inp/
 # Large/generated parameter sweeps
 userio/inp/SOBOLpar.txt
 userio/inp/SOBOLpar_unfinished.txt
+AGENTS.md

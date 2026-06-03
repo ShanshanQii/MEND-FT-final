@@ -17,8 +17,8 @@
     ssMEND = 'CN'
 
 !!ALT frozen-soil scheme
-!! iALT_type = 0: seasonally frozen soil (current Haibei formulation)
-!! iALT_type = 1: permafrost (Beiluhe formulation)
+!! iALT_type = 0: seasonally frozen soil
+!! iALT_type = 1: permafrost
     iALT_type = 0
 
 !!select a range of rows to compute obj for iModel=3 (Sobol Sensitivity)
@@ -70,6 +70,16 @@
     nfile_ST    = 1
     sfilename_ST = 'STP_day.dat'
     ST_constant = 20
+
+!!soil TEMPERATURE data used only for freeze-thaw front generation:
+!! ifdata_STP_FT = 0 -> use the same STP series as the main MEND temperature input
+!! ifdata_STP_FT = 1 -> read a separate temperature file only for Fdep/Tdep calculation
+!! Recommended: use near-surface soil temperature, preferably the 5 cm soil temperature series, for freeze-thaw front calculation.
+    ifdata_STP_FT   = 1
+    sUnits_STP_FT   = 'C'
+    step_STP_FT     = 'daily'
+    nfile_STP_FT    = 1
+    sfilename_STP_FT = 'STP_5cm_day.dat'
 
 !!soil Fdep data: [0-No,1-Yes], units, time-step ['hourly','daily','monthly'], # of files
     ifdata_Fdep   = 1
